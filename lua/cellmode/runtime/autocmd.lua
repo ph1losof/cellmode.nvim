@@ -1,73 +1,47 @@
 local controller = require("cellmode.runtime.controller")
 local session_store = require("cellmode.runtime.session_store")
-local resolver = require("cellmode.runtime.adapter_resolver")
-local messages = require("cellmode.runtime.messages")
-local table_view = require("cellmode.ui.table_view")
+local overlay = require("cellmode.view.overlay")
 local scheduler = require("cellmode.runtime.scheduler")
-local adapter_client = require("cellmode.adapter.client")
+local messages = require("cellmode.runtime.messages")
+local auto_quote = require("cellmode.runtime.auto_quote")
 
 local M = {}
 
 local GROUP = "cellmode"
-local reformat_busy = {}
-local write_group = nil
+local pending_change = {}
 
-local function schedule_table_view(bufnr, winid)
-  scheduler.once(bufnr, "view", 16, function()
+local function flush_pending(bufnr)
+  local change = pending_change[bufnr]
+  if not change then
+    return
+  end
+  pending_change[bufnr] = nil
+  controller.on_buffer_changed(bufnr, change)
+end
+
+local function schedule_changed(bufnr)
+  scheduler.next_tick(bufnr, "changed", function()
     if not vim.api.nvim_buf_is_valid(bufnr) then
+      pending_change[bufnr] = nil
       return
     end
-    if not session_store.get(bufnr) then
-      return
-    end
-    if (not winid or not vim.api.nvim_win_is_valid(winid)) then
-      local wins = vim.fn.win_findbuf(bufnr)
-      winid = wins[1]
-    end
-    if winid and vim.api.nvim_win_is_valid(winid) then
-      pcall(table_view.apply, winid)
-    end
+    flush_pending(bufnr)
   end)
 end
 
-local function schedule_reformat(bufnr)
-  scheduler.next_tick(bufnr, "reformat", function()
-    if not vim.api.nvim_buf_is_valid(bufnr) then
-      return
-    end
-    if reformat_busy[bufnr] or not session_store.get(bufnr) then
-      return
-    end
-    local ranges = session_store.consume_changed_line_ranges(bufnr)
-    if #ranges == 0 then
-      return
-    end
-    reformat_busy[bufnr] = true
-    local ok, result, err = pcall(controller.reformat_from_changed_ranges, bufnr, ranges)
-    reformat_busy[bufnr] = nil
-    if not ok then
-      messages.error(result)
-      return
-    end
-    if result == false then
-      messages.error(err)
-      return
-    end
-    schedule_table_view(bufnr)
-  end)
-end
-
-local function push_changed_range(bufnr, firstline, lastline, new_lastline)
-  local old_start = firstline + 1
-  local old_end = math.max(old_start - 1, lastline)
-  local new_start = firstline + 1
-  local new_end = math.max(new_start - 1, new_lastline)
-  session_store.push_changed_line_range(bufnr, {
-    old_start = old_start,
-    old_end = old_end,
-    new_start = new_start,
-    new_end = new_end,
-  })
+local function record_change(bufnr, firstline, lastline, new_lastline)
+  local prev = pending_change[bufnr]
+  if not prev then
+    pending_change[bufnr] = {
+      first_line = firstline,
+      last_line = lastline,
+      new_last_line = new_lastline,
+    }
+    return
+  end
+  prev.first_line = math.min(prev.first_line, firstline)
+  prev.last_line = math.max(prev.last_line, lastline)
+  prev.new_last_line = math.max(prev.new_last_line, new_lastline)
 end
 
 function M.attach_buffer_tracking(bufnr)
@@ -82,117 +56,91 @@ function M.attach_buffer_tracking(bufnr)
       if session_store.is_updating_buffer(changed_bufnr) then
         return
       end
-      push_changed_range(changed_bufnr, firstline, lastline, new_lastline)
-      schedule_reformat(changed_bufnr)
+      record_change(changed_bufnr, firstline, lastline, new_lastline)
+      schedule_changed(changed_bufnr)
     end,
     on_detach = function(_, detached_bufnr)
       vim.b[detached_bufnr].cellmode_lines_attached = false
+      pending_change[detached_bufnr] = nil
     end,
   })
   vim.b[bufnr].cellmode_lines_attached = true
 end
 
-local function should_skip(bufnr)
+local function should_attach(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
-    return true
+    return false
+  end
+  if vim.api.nvim_buf_get_name(bufnr) == "" then
+    return false
   end
   if not vim.bo[bufnr].modifiable then
-    return true
+    return false
   end
-  return vim.api.nvim_buf_get_name(bufnr) == ""
+  return true
+end
+
+local function format_for_buffer(bufnr)
+  local ft = vim.bo[bufnr].filetype
+  if ft == "csv" or ft == "tsv" then
+    return ft
+  end
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  local ext = path:match("^.+%.([^.]+)$")
+  if ext == "csv" or ext == "tsv" then
+    return ext
+  end
+  return nil
 end
 
 local function on_buf_read_post(args)
   local bufnr = args.buf
-  if should_skip(bufnr) or session_store.get(bufnr) then
+  if not should_attach(bufnr) then
     return
   end
-
-  local spec = resolver.from_buffer(bufnr)
-  if not spec then
+  if session_store.get(bufnr) then
     return
   end
-
-  local ok, err = controller.open_from_adapter(bufnr, spec.command, spec.path, spec.format)
+  local format = format_for_buffer(bufnr)
+  if not format then
+    return
+  end
+  local ok, err = controller.open(bufnr, { format = format })
   if not ok then
     messages.error(err)
     return
   end
-  vim.bo[bufnr].buftype = "acwrite"
-  vim.bo[bufnr].swapfile = false
-  M.attach_write_cmd(bufnr)
   M.attach_buffer_tracking(bufnr)
 end
 
-local function on_buf_write_cmd(args)
+local function on_buf_wipeout(args)
+  controller.close(args.buf)
+  scheduler.clear_for_buffer(args.buf)
+  pending_change[args.buf] = nil
+end
+
+local function on_win_enter(args)
   local bufnr = args.buf
   if not session_store.get(bufnr) then
     return
   end
-  local spec = resolver.from_buffer(bufnr)
-  if not spec then
-    messages.error("adapter is not configured for this buffer")
-    return
-  end
-  local ok, err = controller.save_to_adapter(bufnr, spec.path, spec.format)
-  if not ok then
-    messages.error(err)
-    return
-  end
-  vim.bo[bufnr].modified = false
+  local winid = vim.api.nvim_get_current_win()
+  overlay.apply_window_options(winid)
 end
 
-function M.attach_write_cmd(bufnr)
-  if not write_group then
-    return
-  end
-  if vim.b[bufnr].cellmode_write_cmd_attached then
-    return
-  end
-  vim.api.nvim_create_autocmd("BufWriteCmd", {
-    group = write_group,
-    buffer = bufnr,
-    callback = on_buf_write_cmd,
-  })
-  vim.b[bufnr].cellmode_write_cmd_attached = true
-end
-
-local function on_buf_wipeout(args)
-  session_store.close(args.buf)
-  scheduler.clear_for_buffer(args.buf)
-  pcall(table_view.clear_buffer, args.buf)
-end
-
-local function on_win_enter(args)
+local function on_text_changed_i(args)
   if not session_store.get(args.buf) then
     return
   end
-  local winid = vim.api.nvim_get_current_win()
-  schedule_table_view(args.buf, winid)
-end
-
-local function on_win_scrolled(args)
-  local bufnr = args.buf ~= 0 and args.buf or vim.api.nvim_get_current_buf()
-  if not session_store.get(bufnr) then
-    return
-  end
-  local winid = vim.api.nvim_get_current_win()
-  schedule_table_view(bufnr, winid)
+  auto_quote.handle_text_changed(args.buf)
 end
 
 function M.setup()
   local group = vim.api.nvim_create_augroup(GROUP, { clear = true })
-  write_group = vim.api.nvim_create_augroup(GROUP .. "_write", { clear = true })
   vim.api.nvim_create_autocmd("BufReadPost", { group = group, callback = on_buf_read_post })
   vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, { group = group, callback = on_buf_wipeout })
   vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, { group = group, callback = on_win_enter })
-  vim.api.nvim_create_autocmd("WinScrolled", { group = group, callback = on_win_scrolled })
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = group,
-    callback = function()
-      adapter_client.shutdown_all()
-    end,
-  })
+  vim.api.nvim_create_autocmd("TextChangedI", { group = group, callback = on_text_changed_i })
 end
 
 return M

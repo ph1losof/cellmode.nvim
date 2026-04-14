@@ -1,10 +1,9 @@
 local controller = require("cellmode.runtime.controller")
 local session_store = require("cellmode.runtime.session_store")
-local resolver = require("cellmode.runtime.adapter_resolver")
+local cell_layout = require("cellmode.view.cell_layout")
 local runtime_autocmd = require("cellmode.runtime.autocmd")
 local runtime_config = require("cellmode.config")
 local messages = require("cellmode.runtime.messages")
-local errors = require("cellmode.runtime.errors")
 
 local M = {}
 
@@ -23,90 +22,46 @@ local function cmd_open(bufnr, fargs)
   local path = fargs[2]
   local format = fargs[3]
   if not path or not format then
-    return false, "usage: Cellmode open <path> <format> [--adapter <cmd> [args...]]"
+    return false, "usage: Cellmode open <path> <csv|tsv>"
   end
-
-  local adapter_argv
-  if fargs[4] == "--adapter" then
-    adapter_argv = vim.list_slice(fargs, 5)
-    if #adapter_argv == 0 then
-      return false, "usage: Cellmode open <path> <format> --adapter <cmd> [args...]"
-    end
-  elseif fargs[4] and fargs[4] ~= "" then
-    adapter_argv = { fargs[4] }
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  bufnr = api.nvim_get_current_buf()
+  if session_store.get(bufnr) then
+    return true
   end
-
-  local spec, spec_err = resolver.from_open_args(path, format, adapter_argv)
-  if not spec then
-    return false, spec_err
-  end
-
-  local ok, open_err = controller.open_from_adapter(bufnr, spec.command, spec.path, spec.format)
+  local ok, err = controller.open(bufnr, { format = format })
   if not ok then
-    return false, open_err
+    return false, err
   end
-  vim.bo[bufnr].buftype = "acwrite"
-  vim.bo[bufnr].swapfile = false
-  runtime_autocmd.attach_write_cmd(bufnr)
   runtime_autocmd.attach_buffer_tracking(bufnr)
   return true
 end
 
 local function cmd_op(bufnr, fargs)
   local op = fargs[2]
-  local operations
   if op == "set-cell" then
-    local segment = tonumber(fargs[3])
-    local row = tonumber(fargs[4])
-    local col = tonumber(fargs[5])
-    local value = table.concat(vim.list_slice(fargs, 6), " ")
-    if not segment or not row or not col then
-      return false, "usage: Cellmode op set-cell <segment> <row> <col> <value>"
+    local row = tonumber(fargs[3])
+    local col = tonumber(fargs[4])
+    local value = table.concat(vim.list_slice(fargs, 5), " ")
+    if not row or not col then
+      return false, "usage: Cellmode op set-cell <row> <col> <value>"
     end
-    operations = {
-      { op = "set_cell", segment = segment, row = row, col = col, value = value },
-    }
+    return controller.set_cell(bufnr, row, col, value)
   elseif op == "insert-row" then
-    local segment = tonumber(fargs[3])
-    local row = tonumber(fargs[4])
-    local values = split_csv(table.concat(vim.list_slice(fargs, 5), " "))
-    if not segment or not row then
-      return false, "usage: Cellmode op insert-row <segment> <row> <value1,value2,...>"
+    local row = tonumber(fargs[3])
+    local values = split_csv(table.concat(vim.list_slice(fargs, 4), " "))
+    if not row then
+      return false, "usage: Cellmode op insert-row <row> <value1,value2,...>"
     end
-    operations = {
-      { op = "insert_row", segment = segment, row = row, values = values },
-    }
+    return controller.insert_row(bufnr, row, values)
   elseif op == "delete-row" then
-    local segment = tonumber(fargs[3])
-    local row = tonumber(fargs[4])
-    if not segment or not row then
-      return false, "usage: Cellmode op delete-row <segment> <row>"
+    local row = tonumber(fargs[3])
+    if not row then
+      return false, "usage: Cellmode op delete-row <row>"
     end
-    operations = {
-      { op = "delete_row", segment = segment, row = row },
-    }
-  else
-    return false, "usage: Cellmode op <set-cell|insert-row|delete-row> ..."
+    return controller.delete_row(bufnr, row)
   end
-
-  local ok, op_err = controller.apply_operations(bufnr, operations)
-  if not ok then
-    return false, errors.unwrap(op_err)
-  end
-  return true
-end
-
-local function cmd_save(bufnr, fargs)
-  local path = fargs[2] or api.nvim_buf_get_name(bufnr)
-  local format = fargs[3]
-  if not path or path == "" then
-    return false, "usage: Cellmode save <path> [format]"
-  end
-  local ok, save_err = controller.save_to_adapter(bufnr, path, format)
-  if not ok then
-    return false, save_err
-  end
-  return true
+  return false, "usage: Cellmode op <set-cell|insert-row|delete-row> ..."
 end
 
 local function cmd_status(bufnr)
@@ -115,14 +70,29 @@ local function cmd_status(bufnr)
     messages.info("no active session")
     return true
   end
-  local sheet = session.workbook.sheets[session.workbook.active_sheet]
-  local text = string.format(
-    "workbook=%s format=%s active_sheet=%s",
-    session.workbook.id,
-    session.workbook.format,
-    sheet and sheet.name or "(none)"
-  )
-  messages.info(text)
+  local layout = cell_layout.get(bufnr)
+  local rec_count = layout and #layout.records or 0
+  local col_count = layout and #(layout.widths or {}) or 0
+  local visible = session.overlay_visible ~= false
+  messages.info(string.format(
+    "format=%s records=%d columns=%d overlay=%s",
+    session.format,
+    rec_count,
+    col_count,
+    visible and "on" or "off"
+  ))
+  return true
+end
+
+local function cmd_toggle(bufnr)
+  return controller.toggle_overlay(bufnr)
+end
+
+local function cmd_save(bufnr, fargs)
+  local _ = fargs
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.cmd("write")
+  end)
   return true
 end
 
@@ -131,17 +101,18 @@ function M.exec(opts)
   local action = fargs[1]
   local bufnr = api.nvim_get_current_buf()
   if not action then
-    return false, "usage: Cellmode <open|op|save|status> ..."
+    return false, "usage: Cellmode <open|op|toggle|status|save> ..."
   end
-
   if action == "open" then
     return cmd_open(bufnr, fargs)
   elseif action == "op" then
     return cmd_op(bufnr, fargs)
-  elseif action == "save" then
-    return cmd_save(bufnr, fargs)
+  elseif action == "toggle" then
+    return cmd_toggle(bufnr)
   elseif action == "status" then
     return cmd_status(bufnr)
+  elseif action == "save" then
+    return cmd_save(bufnr, fargs)
   end
   return false, "unknown action: " .. action
 end
@@ -156,7 +127,7 @@ function M.setup()
   end, {
     nargs = "*",
     complete = function()
-      return { "open", "op", "save", "status" }
+      return { "open", "op", "toggle", "status", "save" }
     end,
   })
 end
