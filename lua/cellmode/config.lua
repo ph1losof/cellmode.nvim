@@ -10,12 +10,14 @@ local defaults = {
     lf = "↲",
     tab = "⇥",
   },
+  sticky_header = true,
 }
 
 local function assign(cfg)
   M.adapters = cfg.adapters
   M.command = cfg.command
   M.marks = cfg.marks
+  M.sticky_header = cfg.sticky_header
 end
 
 function M.setup(opts)

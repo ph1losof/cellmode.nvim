@@ -1,6 +1,7 @@
 local session_store = require("cellmode.runtime.session_store")
 local cell_layout = require("cellmode.view.cell_layout")
 local overlay = require("cellmode.view.overlay")
+local sticky_header = require("cellmode.view.sticky_header")
 local csv_parser = require("cellmode.codec.csv_parser")
 
 local M = {}
@@ -42,10 +43,12 @@ function M.open(bufnr, opts)
   })
   apply_window_options_for_buffer(bufnr)
   overlay.redraw(bufnr)
+  sticky_header.refresh_buffer(bufnr)
   return true
 end
 
 function M.close(bufnr)
+  sticky_header.disable_for_buffer(bufnr)
   session_store.close(bufnr)
   cell_layout.clear(bufnr)
   overlay.forget(bufnr)
@@ -68,6 +71,7 @@ function M.on_buffer_changed(bufnr, change)
   else
     overlay.redraw_range(bufnr, result.first_record, result.last_record, result.widths_changed)
   end
+  sticky_header.refresh_buffer(bufnr)
 end
 
 function M.toggle_overlay(bufnr)
@@ -78,6 +82,11 @@ function M.toggle_overlay(bufnr)
   local visible = session.overlay_visible == false
   session_store.set_overlay_visible(bufnr, visible)
   overlay.set_visible(bufnr, visible)
+  if visible then
+    sticky_header.refresh_buffer(bufnr)
+  else
+    sticky_header.disable_for_buffer(bufnr)
+  end
   return true
 end
 

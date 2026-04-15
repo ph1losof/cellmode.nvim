@@ -1,6 +1,7 @@
 local controller = require("cellmode.runtime.controller")
 local session_store = require("cellmode.runtime.session_store")
 local overlay = require("cellmode.view.overlay")
+local sticky_header = require("cellmode.view.sticky_header")
 local scheduler = require("cellmode.runtime.scheduler")
 local messages = require("cellmode.runtime.messages")
 local auto_quote = require("cellmode.runtime.auto_quote")
@@ -114,6 +115,7 @@ local function on_buf_read_post(args)
 end
 
 local function on_buf_wipeout(args)
+  sticky_header.disable_for_buffer(args.buf)
   controller.close(args.buf)
   scheduler.clear_for_buffer(args.buf)
   pending_change[args.buf] = nil
@@ -125,7 +127,11 @@ local function on_win_enter(args)
     return
   end
   local winid = vim.api.nvim_get_current_win()
+  if sticky_header.is_float(winid) then
+    return
+  end
   overlay.apply_window_options(winid)
+  sticky_header.refresh(winid)
 end
 
 local function on_text_changed_i(args)
@@ -135,12 +141,56 @@ local function on_text_changed_i(args)
   auto_quote.handle_text_changed(args.buf)
 end
 
+local function on_win_scrolled()
+  local event = vim.v.event or {}
+  local handled = false
+  for key, _ in pairs(event) do
+    local winid = tonumber(key)
+    if winid and winid > 0 and not sticky_header.is_float(winid) then
+      sticky_header.refresh(winid)
+      handled = true
+    end
+  end
+  if not handled then
+    sticky_header.refresh(vim.api.nvim_get_current_win())
+  end
+end
+
+local function on_win_resized()
+  local event = vim.v.event or {}
+  local wins = event.windows
+  if type(wins) == "table" then
+    for _, winid in ipairs(wins) do
+      if not sticky_header.is_float(winid) then
+        sticky_header.refresh(winid)
+      end
+    end
+  else
+    sticky_header.refresh(vim.api.nvim_get_current_win())
+  end
+end
+
+local function on_win_closed(args)
+  local winid = tonumber(args.match)
+  if not winid then
+    return
+  end
+  if sticky_header.is_float(winid) then
+    sticky_header.forget_float(winid)
+  else
+    sticky_header.disable_for_win(winid)
+  end
+end
+
 function M.setup()
   local group = vim.api.nvim_create_augroup(GROUP, { clear = true })
   vim.api.nvim_create_autocmd("BufReadPost", { group = group, callback = on_buf_read_post })
   vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, { group = group, callback = on_buf_wipeout })
   vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, { group = group, callback = on_win_enter })
   vim.api.nvim_create_autocmd("TextChangedI", { group = group, callback = on_text_changed_i })
+  vim.api.nvim_create_autocmd("WinScrolled", { group = group, callback = on_win_scrolled })
+  vim.api.nvim_create_autocmd("WinResized", { group = group, callback = on_win_resized })
+  vim.api.nvim_create_autocmd("WinClosed", { group = group, callback = on_win_closed })
 end
 
 return M

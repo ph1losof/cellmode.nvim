@@ -12,6 +12,7 @@ M.codec = {
 M.view = {
   cell_layout = require("cellmode.view.cell_layout"),
   overlay = overlay,
+  sticky_header = require("cellmode.view.sticky_header"),
 }
 
 M.runtime = {
