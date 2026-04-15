@@ -64,13 +64,26 @@ local function pad_str(width)
   return string.rep(" ", width)
 end
 
+local function place_hbar(bufnr, row0)
+  local line = vim.api.nvim_buf_get_lines(bufnr, row0, row0 + 1, false)[1] or ""
+  if #line == 0 then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(bufnr, ns, row0, 0, {
+    end_row = row0,
+    end_col = #line,
+    hl_group = "CellmodeHbar",
+  })
+end
+
 local function decorate_single_line_record(bufnr, layout, record)
   local row0 = record.buf_row_start - 1
   local fields = record.fields
   local widths = layout.widths or {}
   local pipe = pipe_glyph()
 
-  place_inline(bufnr, row0, 0, { { pipe, "CellmodePipe" } })
+  place_inline(bufnr, row0, 0, { { pipe, { "CellmodePipe", "CellmodeHbar" } } })
+  place_hbar(bufnr, row0)
 
   for icol = 1, #fields do
     local field = fields[icol]
@@ -79,9 +92,9 @@ local function decorate_single_line_record(bufnr, layout, record)
     local padding = pad_str(width - field_display)
     local chunks = {}
     if padding ~= "" then
-      chunks[#chunks + 1] = { padding, "CellmodePadding" }
+      chunks[#chunks + 1] = { padding, { "CellmodePadding", "CellmodeHbar" } }
     end
-    chunks[#chunks + 1] = { pipe, "CellmodePipe" }
+    chunks[#chunks + 1] = { pipe, { "CellmodePipe", "CellmodeHbar" } }
 
     local end_col
     if field.delim_col then
@@ -112,6 +125,7 @@ local function decorate_multiline_record(bufnr, record)
       right_gravity = false,
     })
   end
+  place_hbar(bufnr, record.buf_row_end - 1)
 end
 
 local function clear_lines(bufnr, row_start, row_end)
@@ -208,7 +222,7 @@ function M.apply_window_options(winid)
     return
   end
   vim.wo[winid].conceallevel = 2
-  vim.wo[winid].concealcursor = "nc"
+  vim.wo[winid].concealcursor = "nvc"
 end
 
 return M
