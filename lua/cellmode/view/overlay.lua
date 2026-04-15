@@ -103,7 +103,7 @@ local function decorate_single_line_record(bufnr, layout, record)
       local line = vim.api.nvim_buf_get_lines(bufnr, row0, row0 + 1, false)[1] or ""
       end_col = #line + 1
     end
-    place_inline(bufnr, row0, end_col - 1, chunks)
+    place_inline(bufnr, row0, end_col - 1, chunks, { right_gravity = true })
 
     if field.delim_col then
       place_conceal(bufnr, row0, field.delim_col - 1, field.delim_col)
@@ -222,7 +222,7 @@ function M.apply_window_options(winid)
     return
   end
   vim.wo[winid].conceallevel = 2
-  vim.wo[winid].concealcursor = "nvc"
+  vim.wo[winid].concealcursor = "nvic"
 end
 
 return M
