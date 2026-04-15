@@ -3,6 +3,7 @@ local cell_layout = require("cellmode.view.cell_layout")
 local overlay = require("cellmode.view.overlay")
 local sticky_header = require("cellmode.view.sticky_header")
 local csv_parser = require("cellmode.codec.csv_parser")
+local keymaps = require("cellmode.runtime.keymaps")
 
 local M = {}
 
@@ -44,10 +45,12 @@ function M.open(bufnr, opts)
   apply_window_options_for_buffer(bufnr)
   overlay.redraw(bufnr)
   sticky_header.refresh_buffer(bufnr)
+  keymaps.attach(bufnr)
   return true
 end
 
 function M.close(bufnr)
+  keymaps.detach(bufnr)
   sticky_header.disable_for_buffer(bufnr)
   session_store.close(bufnr)
   cell_layout.clear(bufnr)

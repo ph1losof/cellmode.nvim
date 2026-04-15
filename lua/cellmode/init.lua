@@ -24,6 +24,7 @@ M.runtime = {
   errors = require("cellmode.runtime.errors"),
   scheduler = require("cellmode.runtime.scheduler"),
   auto_quote = require("cellmode.runtime.auto_quote"),
+  keymaps = require("cellmode.runtime.keymaps"),
 }
 
 function M.setup(opts)

@@ -11,6 +11,7 @@ local defaults = {
     tab = "⇥",
   },
   sticky_header = true,
+  remap = true,
 }
 
 local function assign(cfg)
@@ -18,6 +19,7 @@ local function assign(cfg)
   M.command = cfg.command
   M.marks = cfg.marks
   M.sticky_header = cfg.sticky_header
+  M.remap = cfg.remap
 end
 
 function M.setup(opts)
