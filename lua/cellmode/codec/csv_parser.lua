@@ -15,6 +15,7 @@ local function read_quoted_field(lines, row, col, nl, field)
   field.quoted = true
   field.byte_start_row = row
   field.byte_start_col = col
+  field.escapes = {}
   col = col + 1
   local last_row, last_col = row, col - 1
   local parts = {}
@@ -34,6 +35,7 @@ local function read_quoted_field(lines, row, col, nl, field)
         local nx = line:sub(col + 1, col + 1)
         if nx == QUOTE then
           parts[#parts + 1] = QUOTE
+          field.escapes[#field.escapes + 1] = { row = row, col = col + 1 }
           col = col + 2
         else
           last_row, last_col = row, col

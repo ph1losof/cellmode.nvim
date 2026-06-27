@@ -23,7 +23,14 @@ local function compute_field_widths(record)
   for i = 1, #record.fields do
     local field = record.fields[i]
     if field.multiline then
-      widths[i] = display_width(field.value:gsub("\n.*", ""))
+      local maxw = 0
+      for _, seg in ipairs(vim.split(field.value, "\n", { plain = true })) do
+        local w = display_width(seg)
+        if w > maxw then
+          maxw = w
+        end
+      end
+      widths[i] = maxw
     else
       widths[i] = display_width(field.value)
     end

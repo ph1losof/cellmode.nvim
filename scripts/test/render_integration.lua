@@ -42,6 +42,20 @@ local function wait_for(predicate, timeout_ms)
   return ok == true
 end
 
+local function chunk_has_hl(hl, target)
+  if hl == target then
+    return true
+  end
+  if type(hl) == "table" then
+    for i = 1, #hl do
+      if hl[i] == target then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 local function has_extmark_with(bufnr, ns, predicate)
   local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, ns, { 0, 0 }, { -1, -1 }, { details = true })
   for i = 1, #extmarks do
@@ -98,7 +112,7 @@ local function run_suite()
     local has_pipe = has_extmark_with(bufnr, ns, function(d)
       if not d.virt_text then return false end
       for i = 1, #d.virt_text do
-        if d.virt_text[i][2] == "CellmodePipe" then
+        if chunk_has_hl(d.virt_text[i][2], "CellmodePipe") then
           return true
         end
       end
@@ -137,6 +151,88 @@ local function run_suite()
     assert_true(lines[1] == "name,age", "saved header mismatch")
     assert_true(lines[2] == "charlie,7", "saved row 2 mismatch: " .. (lines[2] or ""))
     assert_true(lines[3] == "z,100", "saved row 3 mismatch: " .. (lines[3] or ""))
+  end)
+
+  run_test("escaped_quotes_concealed", function()
+    local qfile = vim.fn.tempname() .. ".csv"
+    vim.fn.writefile({
+      "name,note",
+      'grace,"the term ""bug"""',
+    }, qfile)
+    vim.cmd("edit " .. vim.fn.fnameescape(qfile))
+    local qbuf = vim.api.nvim_get_current_buf()
+    wait_for(function()
+      return cell_layout.get(qbuf) ~= nil
+    end, 1200)
+
+    local layout = cell_layout.get(qbuf)
+    local note = layout.records[2].fields[2]
+    assert_true(note.value == 'the term "bug"', "field value not unescaped: " .. tostring(note.value))
+    assert_true(note.escapes and #note.escapes == 2, "expected 2 escaped quotes recorded")
+
+    -- The doubled quotes are on buffer row 2 (0-based row 1). One byte of
+    -- each "" pair must carry a conceal extmark so it renders as a single ".
+    local concealed = {}
+    local marks = vim.api.nvim_buf_get_extmarks(qbuf, ns, { 1, 0 }, { 1, -1 }, { details = true })
+    for i = 1, #marks do
+      if (marks[i][4] or {}).conceal ~= nil then
+        concealed[marks[i][3]] = true
+      end
+    end
+    for i = 1, #note.escapes do
+      local col0 = note.escapes[i].col - 1
+      assert_true(concealed[col0], "escaped quote at col " .. col0 .. " not concealed")
+    end
+
+    vim.cmd("bdelete! " .. qbuf)
+    pcall(vim.fn.delete, qfile)
+  end)
+
+  run_test("multiline_record_renders_grid", function()
+    local mfile = vim.fn.tempname() .. ".csv"
+    vim.fn.writefile({
+      "id,note",
+      '1,"line one',
+      'line two"',
+    }, mfile)
+    vim.cmd("edit " .. vim.fn.fnameescape(mfile))
+    local mbuf = vim.api.nvim_get_current_buf()
+    wait_for(function()
+      local l = cell_layout.get(mbuf)
+      return l ~= nil and l.records[2] and l.records[2].multiline
+    end, 1200)
+
+    -- The continuation row (buffer row 3, 0-based row 2) must carry the grid:
+    -- a leading pipe + empty cell for the absent first column, then the cell.
+    local function row_has_pipe(row0)
+      local marks = vim.api.nvim_buf_get_extmarks(mbuf, ns, { row0, 0 }, { row0, -1 }, { details = true })
+      for i = 1, #marks do
+        local d = marks[i][4] or {}
+        if d.virt_text and d.virt_text_pos == "inline" then
+          for j = 1, #d.virt_text do
+            if chunk_has_hl(d.virt_text[j][2], "CellmodePipe") then
+              return true
+            end
+          end
+        end
+      end
+      return false
+    end
+    assert_true(row_has_pipe(2), "continuation row missing grid pipes")
+
+    -- closing quote on the continuation row must be concealed
+    local field = cell_layout.get(mbuf).records[2].fields[2]
+    local concealed = false
+    local marks = vim.api.nvim_buf_get_extmarks(mbuf, ns, { 2, 0 }, { 2, -1 }, { details = true })
+    for i = 1, #marks do
+      if (marks[i][4] or {}).conceal ~= nil and marks[i][3] == field.byte_end_col - 1 then
+        concealed = true
+      end
+    end
+    assert_true(concealed, "closing quote on continuation row not concealed")
+
+    vim.cmd("bdelete! " .. mbuf)
+    pcall(vim.fn.delete, mfile)
   end)
 
   pcall(vim.fn.delete, tmpfile)

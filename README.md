@@ -26,7 +26,6 @@ require("cellmode").setup({
   command = "Cellmode",  -- user-command name
   marks = {
     pipe = "│",   -- column separator glyph
-    pipec = "┊",  -- multi-line continuation glyph
   },
 })
 ```
@@ -39,7 +38,8 @@ The plugin attaches automatically on `BufReadPost` for buffers with filetype or 
 - A pure-Lua RFC 4180 parser (`cellmode.codec.csv_parser`) builds a per-buffer cell layout (`cellmode.view.cell_layout`) on attach and incrementally on each edit.
 - An overlay (`cellmode.view.overlay`) places extmarks: inline `virt_text` for column pipes and alignment padding, and `conceal=""` to hide the underlying delimiters and quote characters when not on the cursor line. Per-window `conceallevel=2` and `concealcursor=nc` are set on attach so editing reveals the raw text.
 - Typing the format's delimiter inside an unquoted cell auto-quotes the cell (`cellmode.runtime.auto_quote`) so cell boundaries stay stable.
-- Multi-line cells (RFC 4180 quoted values containing `\n`) span multiple buffer lines; continuation lines get a marker glyph.
+- Multi-line cells (RFC 4180 quoted values containing `\n`) span multiple buffer lines and render as a full grid: every physical line of the record gets the complete set of column pipes, with empty padded cells for columns that wrap on other lines, so the table stays aligned.
+- Escaped quotes (`""`) inside a quoted field render as a single `"`; the doubled byte is concealed.
 
 ## Commands
 
@@ -61,7 +61,6 @@ The plugin attaches automatically on `BufReadPost` for buffers with filetype or 
 |------------------------|----------------------------------------|
 | `CellmodePipe`         | Column separator glyph                 |
 | `CellmodePadding`      | Alignment padding                      |
-| `CellmodeContinuation` | Multi-line cell continuation marker    |
 | `CellmodeHbar`         | Reserved (row underline)               |
 | `CellmodeSpecialChar`  | Reserved (special-char glyphs)         |
 

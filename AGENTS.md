@@ -53,8 +53,17 @@ Engineering guide for contributors and agents working on `cellmode.nvim`.
   byte position they're anchored to. Combine conceal of the underlying
   delimiter with inline `padding + pipe` virt_text at the same byte to
   produce the visual gap.
-- Multi-line records (RFC 4180 quoted cells with embedded `\n`) use only a
-  continuation glyph; do not place per-column extmarks on continuation lines.
+- Multi-line records (RFC 4180 quoted cells with embedded `\n`) render as a
+  full grid: every physical buffer row of the record gets the complete column
+  set. Columns whose bytes are not physically present on a continuation row
+  (because a neighbouring cell spans multiple lines) are emitted as empty
+  padded cells so all rows stay column-aligned. Column width for a multi-line
+  cell is the widest of its `\n`-split segments. The row separator
+  (`CellmodeHbar` underline) is drawn only on a record's final physical line
+  so a multi-line cell reads as one wrapped row, not several stacked rows.
+- Escaped quotes (`""`) inside a quoted field are recorded per-field
+  (`field.escapes`) by the parser; the overlay conceals one byte of each pair
+  so the cell displays a single `"`.
 - Highlight groups are declared with `default = true` so users can override.
 
 ## No-Fallback Implementation Policy

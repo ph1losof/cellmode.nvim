@@ -5,7 +5,6 @@ local defaults = {
   command = "Cellmode",
   marks = {
     pipe = "│",
-    pipec = "┊",
     padding = "⠀",
     lf = "↲",
     tab = "⇥",

@@ -27,10 +27,11 @@ ARCHITECTURE                                          *cellmode-architecture*
   otherwise only the touched records are redrawn.
 - |cellmode.view.overlay| places extmarks via a single namespace
   (`cellmode_overlay`):
-  * leading and trailing pipes per single-line record,
-  * inline padding + pipe at every delimiter position,
-  * `conceal=""` over delimiters and surrounding quote characters,
-  * a continuation glyph on each buffer line inside a multi-line cell.
+  * a full column grid on every physical buffer row of a record,
+  * inline padding + pipe at every delimiter position, plus empty padded
+    cells for columns that wrap onto other lines so rows stay aligned,
+  * `conceal=""` over delimiters, surrounding quotes, and one byte of each
+    escaped `""` pair so it shows a single `"`.
   Window-local options `conceallevel=2` and `concealcursor=nc` are set on
   attach so editing a line reveals the raw bytes while normal-mode viewing
   shows the pretty grid.
@@ -59,7 +60,6 @@ SETUP                                                 *cellmode-setup*
     command = "Cellmode",
     marks = {
       pipe = "│",
-      pipec = "┊",
     },
   })
 <
@@ -72,7 +72,6 @@ HIGHLIGHTS                                            *cellmode-highlights*
 
 `CellmodePipe`         column separator glyph
 `CellmodePadding`      alignment padding
-`CellmodeContinuation` multi-line cell continuation marker
 `CellmodeHbar`         reserved (row underline)
 `CellmodeSpecialChar`  reserved (special-character glyph)
 

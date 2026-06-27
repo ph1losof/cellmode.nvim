@@ -1,0 +1,9 @@
+id,name,email,role,city,notes
+1,Ada Lovelace,ada@example.com,Engineer,London,"First programmer"
+2,Grace Hopper,grace@example.com,Admiral,New York,"Coined the term ""bug"""
+3,Alan Turing,alan@example.com,Researcher,"Manchester, UK",Codebreaker
+4,Katherine Johnson,katherine@example.com,Mathematician,"Hampton, VA","Orbital mechanics,
+trajectory analysis"
+5,Linus Torvalds,linus@example.com,Maintainer,Portland,"Kernel,
+Git"
+6,Margaret Hamilton,margaret@example.com,Director,Cambridge,Apollo guidance
